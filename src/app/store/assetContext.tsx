@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 
 export type AssetCondition = "excellent" | "good" | "fair" | "poor";
 export type AssetStatus = "available" | "in-use" | "maintenance" | "retired";
@@ -42,6 +42,17 @@ export interface StockItem {
   notes: string;
   photo?: string;
   createdAt: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface StockItemHistoryEntry {
+  id: string;
+  stockItemId: string;
+  action: "created" | "updated";
+  changedAt: string;
+  changedBy: string;
+  summary: string;
 }
 
 export interface InventoryStockEntry {
@@ -238,6 +249,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Stored in Warehouse B",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-2",
@@ -249,6 +262,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Stack of 10 per bundle",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-3",
@@ -260,6 +275,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Heavy duty, outdoor safe",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-4",
@@ -271,6 +288,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Machine washable polyester",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-5",
@@ -282,6 +301,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Box of 100",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-6",
@@ -293,6 +314,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Surge protection, 2m cord",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-7",
@@ -304,6 +327,8 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Portable, with carry bag",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
   {
     id: "s-8",
@@ -315,8 +340,19 @@ const defaultStockItems: StockItem[] = [
     unit: "pcs",
     notes: "Heavy base, adjustable boom",
     createdAt: "2025-01-01T08:00:00Z",
+    updatedAt: "2025-01-01T08:00:00Z",
+    updatedBy: "System",
   },
 ];
+
+const defaultStockItemHistory: StockItemHistoryEntry[] = defaultStockItems.map((item) => ({
+  id: `hist-${item.id}-created`,
+  stockItemId: item.id,
+  action: "created",
+  changedAt: item.createdAt,
+  changedBy: item.updatedBy || "System",
+  summary: `Created with ${item.totalQuantity} ${item.unit}`,
+}));
 
 const defaultInventoryStockEntries: InventoryStockEntry[] = [
   {
@@ -397,6 +433,7 @@ interface AssetContextType {
   assets: Asset[];
   inventories: Inventory[];
   stockItems: StockItem[];
+  stockItemHistory: StockItemHistoryEntry[];
   inventoryStockEntries: InventoryStockEntry[];
   addAsset: (asset: Omit<Asset, "id" | "createdAt">) => void;
   updateAsset: (id: string, updates: Partial<Asset>) => void;
@@ -405,17 +442,19 @@ interface AssetContextType {
   updateInventory: (id: string, updates: Partial<Inventory>) => void;
   deleteInventory: (id: string) => void;
   getInventoryAssets: (inventoryId: string) => Asset[];
-  // Stock
-  addStockItem: (item: Omit<StockItem, "id" | "createdAt">) => void;
-  updateStockItem: (id: string, updates: Partial<StockItem>) => void;
+  addStockItem: (
+    item: Omit<StockItem, "id" | "createdAt" | "updatedAt" | "updatedBy">,
+    updatedBy?: string
+  ) => void;
+  updateStockItem: (id: string, updates: Partial<StockItem>, updatedBy?: string) => void;
   deleteStockItem: (id: string) => void;
-  // Inventory stock entries
   addInventoryStockEntry: (entry: Omit<InventoryStockEntry, "id" | "createdAt">) => void;
   updateInventoryStockEntry: (id: string, updates: Partial<InventoryStockEntry>) => void;
   deleteInventoryStockEntry: (id: string) => void;
   getInventoryStockEntries: (inventoryId: string) => InventoryStockEntry[];
   getStockItemAllocated: (stockItemId: string) => number;
   getStockItemAvailable: (stockItemId: string) => number;
+  getStockItemHistory: (stockItemId: string) => StockItemHistoryEntry[];
   INVENTORY_COLORS: string[];
 }
 
@@ -449,6 +488,15 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     }
   });
 
+  const [stockItemHistory, setStockItemHistory] = useState<StockItemHistoryEntry[]>(() => {
+    try {
+      const stored = localStorage.getItem("stockItemHistory");
+      return stored ? JSON.parse(stored) : defaultStockItemHistory;
+    } catch {
+      return defaultStockItemHistory;
+    }
+  });
+
   const [inventoryStockEntries, setInventoryStockEntries] = useState<InventoryStockEntry[]>(() => {
     try {
       const stored = localStorage.getItem("inventoryStockEntries");
@@ -471,10 +519,31 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
   }, [stockItems]);
 
   useEffect(() => {
+    localStorage.setItem("stockItemHistory", JSON.stringify(stockItemHistory));
+  }, [stockItemHistory]);
+
+  useEffect(() => {
     localStorage.setItem("inventoryStockEntries", JSON.stringify(inventoryStockEntries));
   }, [inventoryStockEntries]);
 
-  // Assets
+  const addStockHistoryEntry = (
+    stockItemId: string,
+    action: "created" | "updated",
+    changedBy: string,
+    summary: string
+  ) => {
+    const entry: StockItemHistoryEntry = {
+      id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      stockItemId,
+      action,
+      changedAt: new Date().toISOString(),
+      changedBy,
+      summary,
+    };
+
+    setStockItemHistory((prev) => [entry, ...prev]);
+  };
+
   const addAsset = (asset: Omit<Asset, "id" | "createdAt">) => {
     const newAsset: Asset = {
       ...asset,
@@ -492,7 +561,6 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     setAssets((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // Inventories
   const addInventory = (inventory: Omit<Inventory, "id" | "createdAt">) => {
     const newInventory: Inventory = {
       ...inventory,
@@ -515,18 +583,85 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
   const getInventoryAssets = (inventoryId: string) =>
     assets.filter((a) => a.inventoryId === inventoryId);
 
-  // Stock items
-  const addStockItem = (item: Omit<StockItem, "id" | "createdAt">) => {
+  const addStockItem = (
+    item: Omit<StockItem, "id" | "createdAt" | "updatedAt" | "updatedBy">,
+    updatedBy = "Unknown user"
+  ) => {
+    const timestamp = new Date().toISOString();
     const newItem: StockItem = {
       ...item,
       id: `s-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updatedBy,
     };
+
     setStockItems((prev) => [newItem, ...prev]);
+    addStockHistoryEntry(
+      newItem.id,
+      "created",
+      updatedBy,
+      `Created with ${newItem.totalQuantity} ${newItem.unit}`
+    );
   };
 
-  const updateStockItem = (id: string, updates: Partial<StockItem>) => {
-    setStockItems((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
+  const updateStockItem = (id: string, updates: Partial<StockItem>, updatedBy = "Unknown user") => {
+    const currentItem = stockItems.find((item) => item.id === id);
+    const timestamp = new Date().toISOString();
+
+    setStockItems((prev) =>
+      prev.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              ...updates,
+              updatedAt: timestamp,
+              updatedBy,
+            }
+          : s
+      )
+    );
+
+    if (currentItem) {
+      const changeParts: string[] = [];
+
+      if (updates.name !== undefined && updates.name !== currentItem.name) {
+        changeParts.push(`name: ${currentItem.name} -> ${updates.name}`);
+      }
+      if (
+        updates.totalQuantity !== undefined &&
+        updates.totalQuantity !== currentItem.totalQuantity
+      ) {
+        changeParts.push(
+          `quantity: ${currentItem.totalQuantity} -> ${updates.totalQuantity}`
+        );
+      }
+      if (updates.unit !== undefined && updates.unit !== currentItem.unit) {
+        changeParts.push(`unit: ${currentItem.unit} -> ${updates.unit}`);
+      }
+      if (updates.category !== undefined && updates.category !== currentItem.category) {
+        changeParts.push(`category: ${currentItem.category || "-"} -> ${updates.category || "-"}`);
+      }
+      if (updates.sku !== undefined && updates.sku !== currentItem.sku) {
+        changeParts.push(`SKU updated`);
+      }
+      if (updates.notes !== undefined && updates.notes !== currentItem.notes) {
+        changeParts.push(`notes updated`);
+      }
+      if (
+        updates.description !== undefined &&
+        updates.description !== currentItem.description
+      ) {
+        changeParts.push(`description updated`);
+      }
+
+      addStockHistoryEntry(
+        id,
+        "updated",
+        updatedBy,
+        changeParts.length > 0 ? changeParts.join(", ") : "Record updated"
+      );
+    }
   };
 
   const deleteStockItem = (id: string) => {
@@ -534,7 +669,6 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     setInventoryStockEntries((prev) => prev.filter((e) => e.stockItemId !== id));
   };
 
-  // Inventory stock entries
   const addInventoryStockEntry = (entry: Omit<InventoryStockEntry, "id" | "createdAt">) => {
     const newEntry: InventoryStockEntry = {
       ...entry,
@@ -568,12 +702,21 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     return item.totalQuantity - getStockItemAllocated(stockItemId);
   };
 
+  const getStockItemHistory = (stockItemId: string) =>
+    stockItemHistory
+      .filter((entry) => entry.stockItemId === stockItemId)
+      .sort(
+        (a, b) =>
+          new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime()
+      );
+
   return (
     <AssetContext.Provider
       value={{
         assets,
         inventories,
         stockItems,
+        stockItemHistory,
         inventoryStockEntries,
         addAsset,
         updateAsset,
@@ -591,6 +734,7 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
         getInventoryStockEntries,
         getStockItemAllocated,
         getStockItemAvailable,
+        getStockItemHistory,
         INVENTORY_COLORS,
       }}
     >
@@ -604,4 +748,3 @@ export function useAssets() {
   if (!ctx) throw new Error("useAssets must be used within AssetProvider");
   return ctx;
 }
-

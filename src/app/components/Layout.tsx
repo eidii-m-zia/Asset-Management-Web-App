@@ -13,8 +13,10 @@ import {
   Search,
   LogOut,
   Layers,
-  User,
+  Settings,
+  Save,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAssets } from "../store/assetContext";
 import { useAuth } from "../store/authContext";
 
@@ -29,22 +31,81 @@ export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [accountForm, setAccountForm] = useState({
+    username: "",
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [accountError, setAccountError] = useState("");
+
   const { assets, inventories, stockItems } = useAssets();
-  const { user, isLoggedIn, logout } = useAuth();
+  const { user, isLoggedIn, logout, updateCredentials } = useAuth();
   const navigate = useNavigate();
 
   if (!isLoggedIn) {
     return <Navigate to="/login" replace />;
   }
 
+  const openAccountSettings = () => {
+    setAccountForm({
+      username: user?.username || "",
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    });
+    setAccountError("");
+    setShowUserMenu(false);
+    setShowAccountSettings(true);
+  };
+
   const handleLogout = () => {
     logout();
     navigate("/login");
   };
 
+  const handleAccountSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAccountError("");
+
+    if (!accountForm.username.trim()) {
+      setAccountError("Username is required.");
+      return;
+    }
+
+    if (!accountForm.currentPassword) {
+      setAccountError("Current password is required.");
+      return;
+    }
+
+    if (!accountForm.newPassword) {
+      setAccountError("New password is required.");
+      return;
+    }
+
+    if (accountForm.newPassword !== accountForm.confirmPassword) {
+      setAccountError("New password and confirmation do not match.");
+      return;
+    }
+
+    const result = updateCredentials({
+      username: accountForm.username,
+      currentPassword: accountForm.currentPassword,
+      newPassword: accountForm.newPassword,
+    });
+
+    if (!result.success) {
+      setAccountError(result.message);
+      return;
+    }
+
+    toast.success(result.message);
+    setShowAccountSettings(false);
+  };
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           className="fixed inset-0 bg-black/40 z-20 lg:hidden"
@@ -52,7 +113,6 @@ export function Layout() {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`
           fixed lg:relative z-30 h-full bg-white border-r border-gray-200
@@ -61,7 +121,6 @@ export function Layout() {
           ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
         `}
       >
-        {/* Logo */}
         <div className="flex items-center gap-2 px-4 py-4 border-b border-gray-100 min-h-[60px]">
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
             <BoxesIcon size={16} className="text-white" />
@@ -90,7 +149,6 @@ export function Layout() {
           </button>
         </div>
 
-        {/* Add Asset Button */}
         <div className="px-3 pt-4 pb-2">
           <button
             onClick={() => {
@@ -105,7 +163,6 @@ export function Layout() {
           </button>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 px-3 py-2 overflow-y-auto">
           <p className={`text-xs text-gray-400 uppercase tracking-wider mb-2 px-2 ${!sidebarOpen && "opacity-0"}`}>
             Menu
@@ -130,7 +187,6 @@ export function Layout() {
             </NavLink>
           ))}
 
-          {/* Inventories sub-list */}
           {sidebarOpen && inventories.length > 0 && (
             <div className="mt-2 ml-2 border-l border-gray-100 pl-4">
               {inventories.map((inv) => (
@@ -154,7 +210,6 @@ export function Layout() {
           )}
         </nav>
 
-        {/* Stats + User */}
         <div className="border-t border-gray-100">
           {sidebarOpen && (
             <div className="px-4 py-2 flex justify-between text-xs text-gray-400">
@@ -163,7 +218,6 @@ export function Layout() {
               <span>{inventories.length} Inv.</span>
             </div>
           )}
-          {/* User row */}
           <div className="px-3 py-2">
             <div className="relative">
               <button
@@ -193,6 +247,13 @@ export function Layout() {
                       <p className="text-sm text-gray-800" style={{ fontWeight: 500 }}>{user?.username}</p>
                     </div>
                     <button
+                      onClick={openAccountSettings}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      <Settings size={14} />
+                      Account Settings
+                    </button>
+                    <button
                       onClick={handleLogout}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
                     >
@@ -207,9 +268,7 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar */}
         <header className="h-[60px] border-b border-gray-200 bg-white flex items-center px-4 gap-4 flex-shrink-0">
           <button
             onClick={() => setMobileOpen(true)}
@@ -251,11 +310,97 @@ export function Layout() {
           </div>
         </header>
 
-        {/* Page content */}
         <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
       </div>
+
+      {showAccountSettings && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="text-gray-900">Account Settings</h3>
+              <button
+                onClick={() => setShowAccountSettings(false)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleAccountSave} className="p-5 space-y-4">
+              {accountError && (
+                <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-sm text-red-600">
+                  {accountError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Username</label>
+                <input
+                  type="text"
+                  value={accountForm.username}
+                  onChange={(e) =>
+                    setAccountForm((prev) => ({ ...prev, username: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Current Password</label>
+                <input
+                  type="password"
+                  value={accountForm.currentPassword}
+                  onChange={(e) =>
+                    setAccountForm((prev) => ({ ...prev, currentPassword: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={accountForm.newPassword}
+                  onChange={(e) =>
+                    setAccountForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={accountForm.confirmPassword}
+                  onChange={(e) =>
+                    setAccountForm((prev) => ({ ...prev, confirmPassword: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAccountSettings(false)}
+                  className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
+                >
+                  <Save size={14} /> Save Account
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

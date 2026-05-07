@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   Search,
   Plus,
@@ -14,16 +14,24 @@ import {
   AlertCircle,
   TrendingDown,
   Layers,
-  CheckCircle2,
+  History,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { useAssets, StockItem } from "../store/assetContext";
 import { toast } from "sonner";
+import { useAssets, StockItem } from "../store/assetContext";
+import { useAuth } from "../store/authContext";
 
-type SortField = "name" | "category" | "sku" | "totalQuantity" | "allocated" | "available" | "unit";
+type SortField =
+  | "name"
+  | "category"
+  | "sku"
+  | "totalQuantity"
+  | "allocated"
+  | "available"
+  | "unit";
 type SortDir = "asc" | "desc";
 
-type StockForm = Omit<StockItem, "id" | "createdAt">;
+type StockForm = Omit<StockItem, "id" | "createdAt" | "updatedAt" | "updatedBy">;
 type EnrichedStockItem = StockItem & { allocated: number; available: number };
 
 const empty: StockForm = {
@@ -44,9 +52,11 @@ export function StockList() {
     deleteStockItem,
     getStockItemAllocated,
     getStockItemAvailable,
+    getStockItemHistory,
     inventoryStockEntries,
     inventories,
   } = useAssets();
+  const { user } = useAuth();
 
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("name");
@@ -57,6 +67,52 @@ export function StockList() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+
+  const duplicateNameMap = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    stockItems.forEach((item) => {
+      const normalized = item.name.trim().toLowerCase();
+      if (!normalized) return;
+      counts.set(normalized, (counts.get(normalized) || 0) + 1);
+    });
+
+    return counts;
+  }, [stockItems]);
+
+  const duplicateItems = useMemo(
+    () =>
+      stockItems.filter((item) => {
+        const normalized = item.name.trim().toLowerCase();
+        return normalized && (duplicateNameMap.get(normalized) || 0) > 1;
+      }),
+    [duplicateNameMap, stockItems]
+  );
+
+  const duplicateGroups = useMemo(() => {
+    const seen = new Set<string>();
+    return duplicateItems.filter((item) => {
+      const normalized = item.name.trim().toLowerCase();
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+  }, [duplicateItems]);
+
+  const duplicateNameWarning = useMemo(() => {
+    const normalized = form.name.trim().toLowerCase();
+    if (!normalized) return null;
+
+    const matches = stockItems.filter(
+      (item) =>
+        item.name.trim().toLowerCase() === normalized &&
+        item.id !== editId
+    );
+
+    if (matches.length === 0) return null;
+
+    return `Warning: ${matches.length} other stock item${matches.length > 1 ? "s" : ""} already use this name.`;
+  }, [editId, form.name, stockItems]);
 
   const getSortableValue = (
     item: EnrichedStockItem,
@@ -72,14 +128,13 @@ export function StockList() {
     }
   };
 
-  // Enrich items with computed allocation data
   const enriched = useMemo(() => {
     return stockItems.map((s) => {
       const allocated = getStockItemAllocated(s.id);
       const available = s.totalQuantity - allocated;
       return { ...s, allocated, available };
     });
-  }, [stockItems, inventoryStockEntries]);
+  }, [getStockItemAllocated, stockItems, inventoryStockEntries]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -95,19 +150,31 @@ export function StockList() {
       .sort((a, b) => {
         const av = getSortableValue(a, sortField);
         const bv = getSortableValue(b, sortField);
-        const cmp = typeof av === "number" ? av - (bv as number) : String(av).localeCompare(String(bv));
+        const cmp =
+          typeof av === "number"
+            ? av - (bv as number)
+            : String(av).localeCompare(String(bv));
         return sortDir === "asc" ? cmp : -cmp;
       });
   }, [enriched, search, sortField, sortDir]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(field); setSortDir("asc"); }
+    else {
+      setSortField(field);
+      setSortDir("asc");
+    }
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return <ChevronsUpDown size={12} className="text-gray-300" />;
-    return sortDir === "asc" ? <ChevronUp size={12} className="text-indigo-500" /> : <ChevronDown size={12} className="text-indigo-500" />;
+    if (sortField !== field) {
+      return <ChevronsUpDown size={12} className="text-gray-300" />;
+    }
+    return sortDir === "asc" ? (
+      <ChevronUp size={12} className="text-indigo-500" />
+    ) : (
+      <ChevronDown size={12} className="text-indigo-500" />
+    );
   };
 
   const openAdd = () => {
@@ -118,7 +185,7 @@ export function StockList() {
   };
 
   const openEdit = (item: StockItem) => {
-    const { id: _id, createdAt: _c, ...rest } = item;
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, updatedBy: _updatedBy, ...rest } = item;
     setForm(rest);
     setEditId(item.id);
     setErrors({});
@@ -128,17 +195,28 @@ export function StockList() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
+
     if (!form.name.trim()) errs.name = "Name is required";
     if (form.totalQuantity < 0) errs.totalQuantity = "Quantity cannot be negative";
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
+
+    if (duplicateNameWarning) {
+      toast.warning(duplicateNameWarning);
+    }
+
+    const actor = user?.username || "Unknown user";
 
     if (editId) {
-      updateStockItem(editId, form);
+      updateStockItem(editId, form, actor);
       toast.success("Stock item updated");
     } else {
-      addStockItem(form);
+      addStockItem(form, actor);
       toast.success("Stock item added");
     }
+
     setShowForm(false);
   };
 
@@ -146,7 +224,9 @@ export function StockList() {
     const allocated = getStockItemAllocated(id);
     deleteStockItem(id);
     setDeleteConfirm(null);
-    toast.success(`Stock item deleted${allocated > 0 ? ` (${allocated} units freed from inventories)` : ""}`);
+    toast.success(
+      `Stock item deleted${allocated > 0 ? ` (${allocated} units freed from inventories)` : ""}`
+    );
   };
 
   const handleExport = () => {
@@ -159,6 +239,8 @@ export function StockList() {
       Allocated: s.allocated,
       Available: s.available,
       Unit: s.unit,
+      "Updated At": s.updatedAt ? new Date(s.updatedAt).toLocaleString() : "",
+      "Updated By": s.updatedBy || "",
       Notes: s.notes,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -168,11 +250,12 @@ export function StockList() {
     toast.success(`Exported ${rows.length} stock items to Excel`);
   };
 
-  // Summary stats
   const totalItems = stockItems.length;
   const totalUnits = stockItems.reduce((s, i) => s + i.totalQuantity, 0);
   const totalAllocated = enriched.reduce((s, i) => s + i.allocated, 0);
-  const lowStockCount = enriched.filter((i) => i.available < i.totalQuantity * 0.2 && i.totalQuantity > 0).length;
+  const lowStockCount = enriched.filter(
+    (i) => i.available < i.totalQuantity * 0.2 && i.totalQuantity > 0
+  ).length;
 
   const getInventoryBreakdown = (stockItemId: string) => {
     return inventoryStockEntries
@@ -186,12 +269,11 @@ export function StockList() {
 
   return (
     <div className="p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1>Stock List</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Consumable & reusable materials — auto-synced with event inventories
+            Consumable and reusable materials auto-synced with event inventories
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -210,13 +292,54 @@ export function StockList() {
         </div>
       </div>
 
-      {/* Summary cards */}
+      {duplicateGroups.length > 0 && (
+        <div className="mb-4 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800">
+          <div className="flex items-start gap-2">
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-sm" style={{ fontWeight: 600 }}>
+                Duplicate stock names detected
+              </p>
+              <p className="text-xs mt-1">
+                {duplicateGroups
+                  .map((item) => `${item.name} (${duplicateNameMap.get(item.name.trim().toLowerCase())})`)
+                  .join(", ")}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         {[
-          { label: "Stock Items", value: totalItems, icon: Layers, color: "bg-indigo-50 text-indigo-600", border: "border-indigo-100" },
-          { label: "Total Units", value: totalUnits.toLocaleString(), icon: Package2, color: "bg-blue-50 text-blue-600", border: "border-blue-100" },
-          { label: "Allocated", value: totalAllocated.toLocaleString(), icon: TrendingDown, color: "bg-purple-50 text-purple-600", border: "border-purple-100" },
-          { label: "Low Stock Items", value: lowStockCount, icon: AlertCircle, color: "bg-orange-50 text-orange-600", border: "border-orange-100" },
+          {
+            label: "Stock Items",
+            value: totalItems,
+            icon: Layers,
+            color: "bg-indigo-50 text-indigo-600",
+            border: "border-indigo-100",
+          },
+          {
+            label: "Total Units",
+            value: totalUnits.toLocaleString(),
+            icon: Package2,
+            color: "bg-blue-50 text-blue-600",
+            border: "border-blue-100",
+          },
+          {
+            label: "Allocated",
+            value: totalAllocated.toLocaleString(),
+            icon: TrendingDown,
+            color: "bg-purple-50 text-purple-600",
+            border: "border-purple-100",
+          },
+          {
+            label: "Low Stock Items",
+            value: lowStockCount,
+            icon: AlertCircle,
+            color: "bg-orange-50 text-orange-600",
+            border: "border-orange-100",
+          },
         ].map((stat) => (
           <div key={stat.label} className={`bg-white rounded-xl border ${stat.border} p-4`}>
             <div className="flex items-center justify-between mb-2">
@@ -230,7 +353,6 @@ export function StockList() {
         ))}
       </div>
 
-      {/* Search */}
       <div className="bg-white border border-gray-200 rounded-xl p-3 mb-4 flex items-center gap-2">
         <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 flex-1">
           <Search size={14} className="text-gray-400" />
@@ -242,7 +364,9 @@ export function StockList() {
             className="bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none w-full"
           />
           {search && (
-            <button onClick={() => setSearch("")}><X size={14} className="text-gray-400 hover:text-gray-600" /></button>
+            <button onClick={() => setSearch("")}>
+              <X size={14} className="text-gray-400 hover:text-gray-600" />
+            </button>
           )}
         </div>
         <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-400">
@@ -250,7 +374,6 @@ export function StockList() {
         </div>
       </div>
 
-      {/* Sort quick buttons */}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="text-xs text-gray-400">Sort by:</span>
         {(["name", "category", "totalQuantity", "allocated", "available"] as SortField[]).map((f) => (
@@ -263,13 +386,18 @@ export function StockList() {
                 : "border-gray-200 text-gray-500 hover:bg-gray-50"
               }`}
           >
-            {f === "totalQuantity" ? "Total Qty" : f === "allocated" ? "Allocated" : f === "available" ? "Available" : f.charAt(0).toUpperCase() + f.slice(1)}
+            {f === "totalQuantity"
+              ? "Total Qty"
+              : f === "allocated"
+                ? "Allocated"
+                : f === "available"
+                  ? "Available"
+                  : f.charAt(0).toUpperCase() + f.slice(1)}
             <SortIcon field={f} />
           </button>
         ))}
       </div>
 
-      {/* Table */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -322,6 +450,10 @@ export function StockList() {
                   const isLow = pct < 20 && item.totalQuantity > 0;
                   const isExpanded = expandedRow === item.id;
                   const breakdown = isExpanded ? getInventoryBreakdown(item.id) : [];
+                  const history = isExpanded ? getStockItemHistory(item.id) : [];
+                  const hasDuplicateName =
+                    (duplicateNameMap.get(item.name.trim().toLowerCase()) || 0) > 1;
+
                   return (
                     <Fragment key={item.id}>
                       <tr
@@ -334,7 +466,15 @@ export function StockList() {
                               <Package2 size={14} className="text-indigo-400" />
                             </div>
                             <div>
-                              <p className="text-sm text-gray-900" style={{ fontWeight: 500 }}>{item.name}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-gray-900" style={{ fontWeight: 500 }}>{item.name}</p>
+                                {hasDuplicateName && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] border border-amber-200">
+                                    <AlertCircle size={10} />
+                                    Duplicate
+                                  </span>
+                                )}
+                              </div>
                               {item.description && (
                                 <p className="text-xs text-gray-400 truncate max-w-[180px]">{item.description}</p>
                               )}
@@ -342,11 +482,11 @@ export function StockList() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-gray-600">{item.category || "—"}</span>
+                          <span className="text-sm text-gray-600">{item.category || "-"}</span>
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                            {item.sku || "—"}
+                            {item.sku || "-"}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -370,7 +510,6 @@ export function StockList() {
                             >
                               {item.available.toLocaleString()}
                             </span>
-                            {/* Mini progress bar */}
                             <div className="w-12 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div
                                 className="h-full rounded-full transition-all"
@@ -405,7 +544,6 @@ export function StockList() {
                           </div>
                         </td>
                       </tr>
-                      {/* Expanded breakdown row */}
                       {isExpanded && (
                         <tr className="border-b border-gray-100 bg-indigo-50/10">
                           <td colSpan={8} className="px-6 py-3">
@@ -433,12 +571,46 @@ export function StockList() {
                                           style={{ backgroundColor: b.inventoryColor }}
                                         />
                                         <span style={{ fontWeight: 500 }}>{b.inventoryName}</span>
-                                        <span className="text-gray-500">— {b.quantityBrought} {item.unit}</span>
+                                        <span className="text-gray-500">- {b.quantityBrought} {item.unit}</span>
                                       </div>
                                     ))}
                                   </div>
                                 )}
                               </div>
+
+                              <div className="min-w-[220px]">
+                                <p className="text-xs text-gray-500 mb-1" style={{ fontWeight: 500 }}>
+                                  Last update
+                                </p>
+                                <p className="text-xs text-gray-600">
+                                  {item.updatedAt
+                                    ? `${new Date(item.updatedAt).toLocaleString()} by ${item.updatedBy || "Unknown user"}`
+                                    : "No updates recorded"}
+                                </p>
+                              </div>
+
+                              {history.length > 0 && (
+                                <div className="min-w-[260px]">
+                                  <div className="flex items-center gap-1.5 mb-2">
+                                    <History size={12} className="text-gray-400" />
+                                    <p className="text-xs text-gray-500" style={{ fontWeight: 500 }}>
+                                      Update history
+                                    </p>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {history.slice(0, 3).map((entry) => (
+                                      <div key={entry.id} className="text-xs text-gray-600 bg-white/70 rounded-lg px-2.5 py-2 border border-gray-100">
+                                        <p style={{ fontWeight: 500 }}>
+                                          {entry.action === "created" ? "Created" : "Updated"} by {entry.changedBy}
+                                        </p>
+                                        <p className="text-gray-500">{new Date(entry.changedAt).toLocaleString()}</p>
+                                        <p className="mt-0.5">{entry.summary}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
                               {item.notes && (
                                 <div>
                                   <p className="text-xs text-gray-500 mb-1" style={{ fontWeight: 500 }}>Notes</p>
@@ -458,12 +630,11 @@ export function StockList() {
         </div>
         {filtered.length > 0 && (
           <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-400">
-            Click a row to see inventory allocation breakdown
+            Click a row to see allocation and item update history
           </div>
         )}
       </div>
 
-      {/* Add / Edit Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -482,12 +653,18 @@ export function StockList() {
                   <input
                     type="text"
                     value={form.name}
-                    onChange={(e) => { setForm((p) => ({ ...p, name: e.target.value })); setErrors((p) => ({ ...p, name: "" })); }}
+                    onChange={(e) => {
+                      setForm((p) => ({ ...p, name: e.target.value }));
+                      setErrors((p) => ({ ...p, name: "" }));
+                    }}
                     placeholder="e.g. Folding Tables"
                     className={`w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300
                       ${errors.name ? "border-red-400" : "border-gray-200"}`}
                   />
                   {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+                  {duplicateNameWarning && (
+                    <p className="text-xs text-amber-600 mt-1">{duplicateNameWarning}</p>
+                  )}
                 </div>
 
                 <div>
@@ -520,7 +697,10 @@ export function StockList() {
                     type="number"
                     min={0}
                     value={form.totalQuantity}
-                    onChange={(e) => { setForm((p) => ({ ...p, totalQuantity: parseInt(e.target.value) || 0 })); setErrors((p) => ({ ...p, totalQuantity: "" })); }}
+                    onChange={(e) => {
+                      setForm((p) => ({ ...p, totalQuantity: parseInt(e.target.value) || 0 }));
+                      setErrors((p) => ({ ...p, totalQuantity: "" }));
+                    }}
                     className={`w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300
                       ${errors.totalQuantity ? "border-red-400" : "border-gray-200"}`}
                   />
@@ -581,7 +761,6 @@ export function StockList() {
         </div>
       )}
 
-      {/* Delete Confirm */}
       {deleteConfirm && (() => {
         const item = stockItems.find((s) => s.id === deleteConfirm);
         const allocated = item ? getStockItemAllocated(item.id) : 0;
