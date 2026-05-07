@@ -12,6 +12,7 @@ import {
   Plus,
 } from "lucide-react";
 import { useAssets } from "../store/assetContext";
+import { SupabaseTodos } from "./SupabaseTodos";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "#22c55e",
@@ -334,6 +335,10 @@ export function Dashboard() {
           <h3 className="text-gray-900 mb-4">Status Breakdown</h3>
           <DonutChart data={statusPieData} colors={pieColors} />
         </div>
+      </div>
+
+      <div className="mb-6">
+        <SupabaseTodos />
       </div>
 
       {/* Inventory & Recent */}
