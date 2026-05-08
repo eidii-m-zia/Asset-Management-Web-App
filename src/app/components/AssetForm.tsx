@@ -129,7 +129,9 @@ export function AssetForm() {
     return errs;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs = validate();
     if (Object.keys(errs).length > 0) {
@@ -137,15 +139,23 @@ export function AssetForm() {
       return;
     }
 
-    if (isEdit && id) {
-      updateAsset(id, form);
-      toast.success("Asset updated successfully");
-    } else {
-      addAsset(form);
-      toast.success("Asset added successfully");
-    }
+    try {
+      setSaving(true);
 
-    navigate("/assets");
+      if (isEdit && id) {
+        await updateAsset(id, form);
+        toast.success("Asset updated successfully");
+      } else {
+        await addAsset(form);
+        toast.success("Asset added successfully");
+      }
+
+      navigate("/assets");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save asset.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -423,10 +433,11 @@ export function AssetForm() {
           </button>
           <button
             type="submit"
+            disabled={saving}
             className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
           >
             <Save size={15} />
-            {isEdit ? "Save Changes" : "Add Asset"}
+            {saving ? "Saving..." : isEdit ? "Save Changes" : "Add Asset"}
           </button>
         </div>
       </form>

@@ -108,10 +108,14 @@ export function AssetList() {
     );
   };
 
-  const handleDelete = (id: string) => {
-    deleteAsset(id);
-    setDeleteConfirm(null);
-    toast.success("Asset deleted");
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteAsset(id);
+      setDeleteConfirm(null);
+      toast.success("Asset deleted");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to delete asset.");
+    }
   };
 
   const handleExport = () => {
@@ -453,7 +457,7 @@ export function AssetList() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirm)}
+                onClick={() => void handleDelete(deleteConfirm)}
                 className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
               >
                 Delete

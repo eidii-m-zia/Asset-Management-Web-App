@@ -67,6 +67,7 @@ export function StockList() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const duplicateNameMap = useMemo(() => {
     const counts = new Map<string, number>();
@@ -192,7 +193,7 @@ export function StockList() {
     setShowForm(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
 
@@ -209,24 +210,36 @@ export function StockList() {
 
     const actor = user?.username || "Unknown user";
 
-    if (editId) {
-      updateStockItem(editId, form, actor);
-      toast.success("Stock item updated");
-    } else {
-      addStockItem(form, actor);
-      toast.success("Stock item added");
-    }
+    try {
+      setSaving(true);
 
-    setShowForm(false);
+      if (editId) {
+        await updateStockItem(editId, form, actor);
+        toast.success("Stock item updated");
+      } else {
+        await addStockItem(form, actor);
+        toast.success("Stock item added");
+      }
+
+      setShowForm(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save stock item.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const allocated = getStockItemAllocated(id);
-    deleteStockItem(id);
-    setDeleteConfirm(null);
-    toast.success(
-      `Stock item deleted${allocated > 0 ? ` (${allocated} units freed from inventories)` : ""}`
-    );
+    try {
+      await deleteStockItem(id);
+      setDeleteConfirm(null);
+      toast.success(
+        `Stock item deleted${allocated > 0 ? ` (${allocated} units freed from inventories)` : ""}`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to delete stock item.");
+    }
   };
 
   const handleExport = () => {
@@ -751,9 +764,10 @@ export function StockList() {
                 </button>
                 <button
                   type="submit"
+                  disabled={saving}
                   className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
                 >
-                  <Save size={14} /> {editId ? "Save Changes" : "Add Stock"}
+                  <Save size={14} /> {saving ? "Saving..." : editId ? "Save Changes" : "Add Stock"}
                 </button>
               </div>
             </form>
@@ -787,7 +801,7 @@ export function StockList() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleDelete(deleteConfirm)}
+                  onClick={() => void handleDelete(deleteConfirm)}
                   className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
                 >
                   Delete

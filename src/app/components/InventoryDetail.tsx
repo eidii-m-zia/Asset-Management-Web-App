@@ -82,6 +82,7 @@ export function InventoryDetail() {
   const [materialForm, setMaterialForm] = useState({ stockItemId: "", quantityBrought: 1, notes: "" });
   const [materialErrors, setMaterialErrors] = useState<Record<string, string>>({});
   const [deleteMaterialConfirm, setDeleteMaterialConfirm] = useState<string | null>(null);
+  const [savingMaterial, setSavingMaterial] = useState(false);
 
   if (!inventory) {
     return (
@@ -114,10 +115,14 @@ export function InventoryDetail() {
     return acc;
   }, {} as Record<string, number>);
 
-  const handleDelete = (assetId: string) => {
-    deleteAsset(assetId);
-    setDeleteConfirm(null);
-    toast.success("Asset deleted");
+  const handleDelete = async (assetId: string) => {
+    try {
+      await deleteAsset(assetId);
+      setDeleteConfirm(null);
+      toast.success("Asset deleted");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to delete asset.");
+    }
   };
 
   const handleExport = () => {
@@ -162,7 +167,7 @@ export function InventoryDetail() {
     setShowMaterialForm(true);
   };
 
-  const handleMaterialSubmit = (e: React.FormEvent) => {
+  const handleMaterialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!materialForm.stockItemId) errs.stockItemId = "Please select a stock item";
@@ -181,28 +186,41 @@ export function InventoryDetail() {
 
     if (Object.keys(errs).length > 0) { setMaterialErrors(errs); return; }
 
-    if (editEntryId) {
-      updateInventoryStockEntry(editEntryId, {
-        quantityBrought: materialForm.quantityBrought,
-        notes: materialForm.notes,
-      });
-      toast.success("Material allocation updated");
-    } else {
-      addInventoryStockEntry({
-        inventoryId: id!,
-        stockItemId: materialForm.stockItemId,
-        quantityBrought: materialForm.quantityBrought,
-        notes: materialForm.notes,
-      });
-      toast.success("Material added to event");
+    try {
+      setSavingMaterial(true);
+
+      if (editEntryId) {
+        await updateInventoryStockEntry(editEntryId, {
+          quantityBrought: materialForm.quantityBrought,
+          notes: materialForm.notes,
+        });
+        toast.success("Material allocation updated");
+      } else {
+        await addInventoryStockEntry({
+          inventoryId: id!,
+          stockItemId: materialForm.stockItemId,
+          quantityBrought: materialForm.quantityBrought,
+          notes: materialForm.notes,
+        });
+        toast.success("Material added to event");
+      }
+
+      setShowMaterialForm(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save material allocation.");
+    } finally {
+      setSavingMaterial(false);
     }
-    setShowMaterialForm(false);
   };
 
-  const handleDeleteMaterial = (entryId: string) => {
-    deleteInventoryStockEntry(entryId);
-    setDeleteMaterialConfirm(null);
-    toast.success("Material removed from event");
+  const handleDeleteMaterial = async (entryId: string) => {
+    try {
+      await deleteInventoryStockEntry(entryId);
+      setDeleteMaterialConfirm(null);
+      toast.success("Material removed from event");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to remove material.");
+    }
   };
 
   // Stock items not yet added to this inventory (for add modal)
@@ -655,7 +673,7 @@ export function InventoryDetail() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirm)}
+                onClick={() => void handleDelete(deleteConfirm)}
                 className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
               >
                 Delete
@@ -788,9 +806,10 @@ export function InventoryDetail() {
                 </button>
                 <button
                   type="submit"
+                  disabled={savingMaterial}
                   className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
                 >
-                  <Save size={14} /> {editEntryId ? "Save Changes" : "Add Material"}
+                  <Save size={14} /> {savingMaterial ? "Saving..." : editEntryId ? "Save Changes" : "Add Material"}
                 </button>
               </div>
             </form>
@@ -817,7 +836,7 @@ export function InventoryDetail() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDeleteMaterial(deleteMaterialConfirm)}
+                onClick={() => void handleDeleteMaterial(deleteMaterialConfirm)}
                 className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
               >
                 Remove

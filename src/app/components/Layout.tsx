@@ -40,7 +40,7 @@ export function Layout() {
   });
   const [accountError, setAccountError] = useState("");
 
-  const { assets, inventories, stockItems } = useAssets();
+  const { assets, inventories, stockItems, isLoading, error, reloadData } = useAssets();
   const { user, isLoggedIn, logout, updateCredentials } = useAuth();
   const navigate = useNavigate();
 
@@ -311,7 +311,32 @@ export function Layout() {
         </header>
 
         <main className="flex-1 overflow-y-auto">
-          <Outlet />
+          {isLoading ? (
+            <div className="h-full flex items-center justify-center p-6">
+              <div className="bg-white border border-gray-200 rounded-2xl px-6 py-5 text-center max-w-md">
+                <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 border-indigo-200 border-t-indigo-600 animate-spin" />
+                <h3 className="text-gray-900 mb-1">Syncing with Supabase</h3>
+                <p className="text-sm text-gray-500">
+                  Loading inventories, assets, and stock data from the database.
+                </p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="h-full flex items-center justify-center p-6">
+              <div className="bg-white border border-red-200 rounded-2xl px-6 py-5 max-w-2xl">
+                <h3 className="text-red-700 mb-2">Supabase connection error</h3>
+                <p className="text-sm text-gray-600 mb-4">{error}</p>
+                <button
+                  onClick={() => void reloadData()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
 

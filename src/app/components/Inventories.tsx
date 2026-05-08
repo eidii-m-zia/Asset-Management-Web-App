@@ -34,6 +34,7 @@ export function Inventories() {
   const [form, setForm] = useState<InventoryForm>(empty);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const openAdd = () => {
     setForm(empty);
@@ -50,27 +51,40 @@ export function Inventories() {
     setShowForm(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!form.name.trim()) errs.name = "Name is required";
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
 
-    if (editId) {
-      updateInventory(editId, form);
-      toast.success("Inventory updated");
-    } else {
-      addInventory(form);
-      toast.success("Inventory created");
+    try {
+      setSaving(true);
+
+      if (editId) {
+        await updateInventory(editId, form);
+        toast.success("Inventory updated");
+      } else {
+        await addInventory(form);
+        toast.success("Inventory created");
+      }
+
+      setShowForm(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save inventory.");
+    } finally {
+      setSaving(false);
     }
-    setShowForm(false);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const count = assets.filter((a) => a.inventoryId === id).length;
-    deleteInventory(id);
-    setDeleteConfirm(null);
-    toast.success(`Inventory deleted${count > 0 ? ` (${count} assets removed)` : ""}`);
+    try {
+      await deleteInventory(id);
+      setDeleteConfirm(null);
+      toast.success(`Inventory deleted${count > 0 ? ` (${count} assets removed)` : ""}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to delete inventory.");
+    }
   };
 
   return (
@@ -294,9 +308,10 @@ export function Inventories() {
                 </button>
                 <button
                   type="submit"
+                  disabled={saving}
                   className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
                 >
-                  <Save size={14} /> {editId ? "Save Changes" : "Create"}
+                  <Save size={14} /> {saving ? "Saving..." : editId ? "Save Changes" : "Create"}
                 </button>
               </div>
             </form>
@@ -326,7 +341,7 @@ export function Inventories() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirm)}
+                onClick={() => void handleDelete(deleteConfirm)}
                 className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
               >
                 Delete All
